@@ -1,98 +1,102 @@
-import dotenv
-import hikari
-import lightbulb
+import discord
+from discord.ext import commands
+from dotenv import load_dotenv
 import os
 
-dotenv.load_dotenv(".env")
+load_dotenv(".env")
 _TOKEN_ = os.getenv("TOKEN")
 _GUILD_ID_ = int(os.getenv("GUILD_ID"))
-_CHANNEL_V_ = int(os.getenv("V_CHAN_ID"))
-_CHANNEL_W_ = int(os.getenv("W_CHAN_ID"))
-ROLE_0 = "news"
-ROLE_1 = "tukas"
+_CHANNEL_ = int(os.getenv("CHAN_ID"))
+ROLE_0 = "news"  # 自动分配的角色
+ROLE_1 = "tukas"  # 回答正确后分配的角色
 
-intents = hikari.Intents.GUILDS | hikari.Intents.GUILD_MEMBERS
-b_giveNewRole = hikari.GatewayBot(_TOKEN_, intents=intents)
-
-
-@b_giveNewRole.listen(hikari.MemberCreateEvent)
-async def on_member_join(event: hikari.MemberCreateEvent):
-    guild = event.guild_id
-    member = event.member
-    roles = await b_giveNewRole.rest.fetch_roles(guild)
-    role_0 = next((role for role in roles if role.name == ROLE_0), None)
-    if role_0:
-        await b_giveNewRole.rest.add_role_to_member(guild, member, role_0)
-        await b_giveNewRole.rest.create_message(
-            _CHANNEL_W_,
-            f"Welcome {member.mention} to the server!"
-        )
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+client = discord.Client(intents=intents)
 
 
-b_verify = lightbulb.client_from_app(b_giveNewRole)
-b_giveNewRole.subscribe(hikari.StartedEvent, b_verify.start)
+class QuizView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)  # 不会自动超时
 
+    @discord.ui.button(label="3", style=discord.ButtonStyle.secondary, custom_id="quiz_3")
+    async def option_3(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_message("不正解です。", ephemeral=True)
 
-@b_verify.register()
-class Verify(
-    lightbulb.SlashCommand,
-    name="verify",
-    description="Verified as human"
-):
-    @lightbulb.invoke
-    async def verify(self, ctx: lightbulb.Context) -> None:
-        if ctx.channel_id != _CHANNEL_V_:
-            await ctx.respond(
-                "This command can only be used in the designated channel.",
-                flags=hikari.MessageFlag.EPHEMERAL
-            )
-            return
-        buttons = hikari.impl.MessageActionRowBuilder()
-        buttons.add_interactive_button(
-            hikari.ButtonStyle.SECONDARY,
-            "answer_2",
-            label="2",
-        )
-        buttons.add_interactive_button(
-            hikari.ButtonStyle.SECONDARY,
-            "answer_3",
-            label="3",
-        )
-        buttons.add_interactive_button(
-            hikari.ButtonStyle.SECONDARY,
-            "answer_4",
-            label="4",
-        )
-        await ctx.respond(
-            "🤖 Q: 2 + 2 = ?",
-            components=[buttons]
-        )
-
-
-@b_verify.app.listen(hikari.ComponentInteractionCreateEvent)
-async def on_button_click(event: hikari.ComponentInteractionCreateEvent) -> None:
-    if event.interaction.channel_id != _CHANNEL_V_:
-        return
-    if event.interaction.component_type is not hikari.InteractionType.MESSAGE_COMPONENT:
-        return
-    custom_id = event.interaction.custom_id
-
-    if custom_id == "answer_4":
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_CREATE,
-            content="Bingo! You're already verified!"
-        )
-        guild_id = event.interaction.guild_id
-        member_id = event.interaction.user.id
-        roles = await b_verify.rest.fetch_roles(guild_id)
-        role_1 = next((role for role in roles if role.name == ROLE_1), None)
+    @discord.ui.button(label="4", style=discord.ButtonStyle.secondary, custom_id="quiz_4")
+    async def option_4(self, button: discord.ui.Button, interaction: discord.Interaction):
+        role_0 = discord.utils.get(interaction.guild.roles, name=ROLE_0)
+        role_1 = discord.utils.get(interaction.guild.roles, name=ROLE_1)
         if role_1:
-            await b_verify.rest.add_role_to_member(guild_id, member_id, role_1)
-    else:
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_CREATE,
-            content="I'm bot, you're bot as well."
+            await interaction.user.add_roles(role_1)
+            await interaction.user.remove_roles(role_0)
+            await interaction.response.send_message("正解です！ロールを付与しました。", ephemeral=True)
+        else:
+            await interaction.response.send_message("ロールが見つかりません。", ephemeral=True)
+
+    @discord.ui.button(label="5", style=discord.ButtonStyle.secondary, custom_id="quiz_5")
+    async def option_5(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_message("不正解です。", ephemeral=True)
+
+
+@client.event
+async def on_ready():
+    print(f'✅ Logged in as {client.user} (ID: {client.user.id})')
+
+
+@client.event
+async def on_member_join(member):
+    if member.guild.id != _GUILD_ID_:
+        return
+
+    guild = member.guild
+    chan = guild.get_channel(_CHANNEL_)
+
+    # 1) 自动分配 news 角色
+    news_role = discord.utils.get(guild.roles, name=ROLE_0)
+    if news_role:
+        await member.add_roles(news_role)
+
+    # 2) 在验证频道发欢迎+题目
+    if chan:
+        await chan.send(
+            f"👋 ようこそ、{member.mention} さん！**{guild.name}** へ参加ありがとうございます！\n"
+            f"あなたには仮のロール **{ROLE_0}** が付与されました。\n"
+            f"こちらのチャンネルで `2+2 = ?` の質問に答えて、正式なロール **{ROLE_1}** を取得してください。",
+            view=QuizView()
         )
 
+    # 也尝试私信
+    try:
+        await member.send(
+            f"ようこそ、**{guild.name}** へ！\n"
+            f"あなたには仮のロール **{ROLE_0}** が付与されました。\n"
+            f"{chan.mention} チャンネルで `2+2 = ?` の質問に答えると、ロール **{ROLE_1}** が取得できます。",
+            view=QuizView()
+        )
+    except discord.Forbidden:
+        pass
 
-b_giveNewRole.run()
+@client.event
+async def on_message(message):
+    # 忽略机器人自身的消息
+    if message.author == client.user:
+        return
+
+    # 只有具有管理角色权限的用户可以使用此命令
+    if message.content == "!check_no_role" and message.author.guild_permissions.manage_roles:
+        guild = message.guild
+        # 查找仅具有默认 @everyone 角色的成员
+        members_no_role = [member for member in guild.members if len(member.roles) <= 1]
+        if members_no_role:
+            response_lines = ["以下成员目前无其他角色："]
+            for member in members_no_role:
+                response_lines.append(f"- {member.mention} ({member.name}#{member.discriminator})")
+            response = "\n".join(response_lines)
+        else:
+            response = "所有成员都至少拥有一个额外角色。"
+        await message.channel.send(response)
+
+
+client.run(_TOKEN_)

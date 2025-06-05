@@ -1,25 +1,14 @@
-import hikari
-import lightbulb
-from dotenv import load_dotenv
+import discord
 import os
+from dotenv import load_dotenv
 
-load_dotenv(".env")
-TOKEN = os.getenv("TOKEN")
-GUILD_ID = os.getenv("GUILD_ID")
+load_dotenv()
+_TOKEN_ = os.getenv("TOKEN")
 
-bot = hikari.GatewayBot(token=TOKEN, intents=hikari.Intents.ALL)
-client = lightbulb.client_from_app(bot)
-bot.subscribe(hikari.StartingEvent, client.start)
+bot = discord.Bot()
 
-@client.register()
-class Meow(
-    lightbulb.SlashCommand,
-    name="pat",
-    description="Give a scritch",
-):
-    @lightbulb.invoke
-    async def invoke(self, ctx: lightbulb.Context) -> None:
-        await ctx.respond("Meow~")
+@bot.slash_command(name="pat", description="Patting Nagi")
+async def pat(ctx: discord.ApplicationContext):
+    await ctx.respond("Meow~")
 
-
-bot.run()
+bot.run(_TOKEN_)
